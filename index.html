@@ -1,0 +1,240 @@
+
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>نظام الحضور والغياب</title>
+<style>
+:root{font-family:Tahoma,Arial,sans-serif;color:#1f2937;background:#f3f6fb}
+*{box-sizing:border-box}
+body{margin:0;padding:18px}
+.wrap{max-width:900px;margin:auto}
+.card{background:white;border-radius:14px;padding:18px;margin:12px 0;box-shadow:0 3px 14px #1b315015}
+h1{margin-top:4px}
+.muted{color:#64748b;font-size:14px}
+input,button{font:inherit;padding:10px;border:1px solid #cbd5e1;border-radius:8px;margin:4px}
+button{background:#2457a7;color:white;border:0;cursor:pointer}
+button.secondary{background:#64748b}
+button.danger{background:#b42318}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+input{max-width:100%}
+table{width:100%;border-collapse:collapse;margin-top:12px}
+td,th{padding:9px;border-bottom:1px solid #e2e8f0;text-align:right}
+.hidden{display:none}
+.status{padding:9px;background:#eff6ff;border-radius:8px}
+</style>
+</head>
+<body>
+<main class="wrap">
+<div class="card">
+<h1 id="heading">نظام الحضور والغياب</h1>
+<p class="muted">إدارة الطلاب والحصص وتسجيل الحضور والغياب وحفظ البيانات على الإنترنت.</p>
+<div id="status" class="status">يلزم إعداد Firebase أولًا.</div>
+</div>
+
+<section class="card" id="login">
+<h2>دخول المسؤول</h2>
+<div class="row">
+<input id="email" type="email" placeholder="البريد الإلكتروني">
+<input id="password" type="password" placeholder="كلمة المرور">
+<button id="loginBtn">تسجيل الدخول</button>
+<button class="secondary" id="signupBtn">إنشاء حساب مسؤول</button>
+</div>
+</section>
+
+<section class="card hidden" id="app">
+<div class="row">
+<h2>الطلاب</h2>
+<button class="secondary" id="logoutBtn">تسجيل الخروج</button>
+</div>
+<div class="row">
+<input id="studentName" placeholder="اسم الطالب">
+<button id="addStudent">إضافة طالب</button>
+</div>
+<div id="students"></div>
+<hr>
+<h2>حصة جديدة</h2>
+<div class="row">
+<input id="lessonTitle" placeholder="عنوان الحصة">
+<input id="lessonDate" type="date">
+<button id="createLesson">إنشاء الحصة</button>
+</div>
+<div id="lessons"></div>
+<hr>
+<h2>تقرير الحضور</h2>
+<div id="report"></div>
+<button id="exportBtn" class="secondary">تصدير CSV</button>
+</section>
+</main>
+
+<script type="module">
+// ضعي إعدادات Firebase الخاصة بمشروعك هنا
+const firebaseConfig = {
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_PROJECT.firebaseapp.com",
+  projectId: "YOUR_PROJECT_ID",
+  appId: "YOUR_APP_ID"
+};
+
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
+import {
+  getAuth, onAuthStateChanged, signInWithEmailAndPassword,
+  createUserWithEmailAndPassword, signOut
+} from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+import {
+  getFirestore, collection, addDoc, getDocs, deleteDoc,
+  doc, setDoc, serverTimestamp
+} from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+
+const statusEl = document.querySelector('#status');
+
+if (firebaseConfig.apiKey === 'YOUR_API_KEY') {
+  statusEl.textContent = 'لم يتم ربط Firebase بعد. أضيفي إعدادات مشروعك أولًا.';
+} else {
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db = getFirestore(app);
+  let currentUser = null, students = [], lessons = [];
+
+  const $ = s => document.querySelector(s);
+  const userCol = name => collection(db, 'users', currentUser.uid, name);
+  function msg(t) { statusEl.textContent = t; }
+
+  onAuthStateChanged(auth, async u => {
+    currentUser = u;
+    $('#login').classList.toggle('hidden', !!u);
+    $('#app').classList.toggle('hidden', !u);
+    if (u) await refresh();
+  });
+
+  $('#loginBtn').onclick = async () => {
+    try {
+      await signInWithEmailAndPassword(auth, $('#email').value, $('#password').value);
+      msg('تم تسجيل الدخول');
+    } catch (e) { msg(e.message); }
+  };
+
+  $('#signupBtn').onclick = async () => {
+    try {
+      await createUserWithEmailAndPassword(auth, $('#email').value, $('#password').value);
+      msg('تم إنشاء الحساب');
+    } catch (e) { msg(e.message); }
+  };
+
+  $('#logoutBtn').onclick = () => signOut(auth);
+
+  async function refresh() {
+    const [ss, ll] = await Promise.all([
+      getDocs(userCol('students')),
+      getDocs(userCol('lessons'))
+    ]);
+    students = ss.docs.map(d => ({id:d.id,...d.data()}));
+    lessons = ll.docs.map(d => ({id:d.id,...d.data()}));
+    render();
+  }
+
+  function esc(x='') {
+    return String(x).replace(/[&<>"']/g, c => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[c]));
+  }
+
+  function render() {
+    $('#students').innerHTML =
+      '<h3>قائمة الطلاب ('+students.length+')</h3>' +
+      students.map(s =>
+        `<div class="row"><span>${esc(s.name)}</span>
+        <button class="danger" data-del-student="${s.id}">حذف</button></div>`
+      ).join('');
+
+    $('#lessons').innerHTML =
+      '<h3>الحصص</h3>' +
+      lessons.map(l => `
+        <div class="card">
+          <b>${esc(l.title)}</b> — ${esc(l.date||'')}
+          <div class="row">
+            ${students.map(s => `
+              <label>
+                <input type="checkbox" data-att="${l.id}|${s.id}"
+                ${l.attendance?.[s.id]?'checked':''}>
+                ${esc(s.name)}
+              </label>
+            `).join('')}
+          </div>
+          <button data-save="${l.id}">حفظ الحضور</button>
+          <button class="danger" data-del-lesson="${l.id}">حذف الحصة</button>
+        </div>
+      `).join('');
+
+    $('#report').innerHTML = students.map(s => {
+      let total = lessons.length;
+      let present = lessons.filter(l => l.attendance?.[s.id]).length;
+      return `<p>${esc(s.name)}: حضور ${present} من ${total}
+      (${total?Math.round(present/total*100):0}%)</p>`;
+    }).join('') || 'لا توجد بيانات بعد';
+  }
+
+  $('#addStudent').onclick = async () => {
+    let name = $('#studentName').value.trim();
+    if (!name) return;
+    await addDoc(userCol('students'), {name,createdAt:serverTimestamp()});
+    $('#studentName').value = '';
+    await refresh();
+  };
+
+  $('#createLesson').onclick = async () => {
+    let title = $('#lessonTitle').value.trim();
+    let date = $('#lessonDate').value;
+    if (!title || !date) return msg('أدخلي عنوان الحصة والتاريخ');
+    await addDoc(userCol('lessons'), {
+      title,date,attendance:{},createdAt:serverTimestamp()
+    });
+    await refresh();
+  };
+
+  document.addEventListener('click', async e => {
+    let t = e.target;
+    if (t.dataset.delStudent) {
+      await deleteDoc(doc(db,'users',currentUser.uid,'students',t.dataset.delStudent));
+      await refresh();
+    }
+    if (t.dataset.delLesson) {
+      await deleteDoc(doc(db,'users',currentUser.uid,'lessons',t.dataset.delLesson));
+      await refresh();
+    }
+    if (t.dataset.save) {
+      let attendance = {};
+      document.querySelectorAll(`[data-att^="${t.dataset.save}|"]`)
+        .forEach(c => attendance[c.dataset.att.split('|')[1]] = c.checked);
+      await setDoc(
+        doc(db,'users',currentUser.uid,'lessons',t.dataset.save),
+        {attendance},{merge:true}
+      );
+      await refresh();
+      msg('تم حفظ الحضور');
+    }
+  });
+
+  $('#exportBtn').onclick = () => {
+    let rows = [
+      ['الطالب','عدد الحصص','الحضور','الغياب','نسبة الحضور'],
+      ...students.map(s => {
+        let p = lessons.filter(l => l.attendance?.[s.id]).length;
+        let n = lessons.length;
+        return [s.name,n,p,n-p,n?Math.round(p/n*100)+'%':'0%'];
+      })
+    ];
+    let csv = '\uFEFF' + rows.map(r =>
+      r.map(v => '"'+String(v).replaceAll('"','""')+'"').join(',')
+    ).join('\n');
+    let a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
+    a.download = 'attendance-report.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+}
+</script>
+</body>
+</html>
