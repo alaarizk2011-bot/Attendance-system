@@ -98,6 +98,7 @@ if (firebaseConfig.apiKey === 'YOUR_API_KEY') {
   const app = initializeApp(firebaseConfig);
   const auth = getAuth(app);
   const db = getFirestore(app);
+  statusEl.textContent = 'تم تحميل إعدادات Firebase. يمكنك تسجيل الدخول.';
   let currentUser = null, students = [], lessons = [];
 statusEl.textContent = 'تم تحميل إعدادات Firebase. سجّلي الدخول للمتابعة.';
   const $ = s => document.querySelector(s);
